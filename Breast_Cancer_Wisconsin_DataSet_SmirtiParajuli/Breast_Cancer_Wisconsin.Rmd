@@ -53,7 +53,7 @@ conflicted::conflicts_prefer(dplyr::count)
 # Read the raw dataset from the specified file path
 ```{r}
 # reading the raw  data 
-DataSet_Raw <- read.csv("Breast_Cancer_Wisconsin_DataSet/data.csv", header=TRUE)
+DataSet_Raw <- read.csv("Breast_Cancer_Wisconsin_DataSet_SmirtiParajuli/data.csv", header=TRUE)
 
 ```
 
