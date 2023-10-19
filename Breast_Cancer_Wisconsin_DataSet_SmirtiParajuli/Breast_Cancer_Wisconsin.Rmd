@@ -1,0 +1,509 @@
+--------------------------------------------------------------------------------
+#Bachelor of Software Engineering (AI)
+#Media Design School
+#Auckland
+#New Zealand
+#(c) [2023] Media Design School
+#Author : Smirti Parajuli
+#Mail : smirti.parajuli@mds.ac.nz
+------------------------------------------------------------------------------
+# Install packages if not already installed
+
+```{r}
+packages_needed <- c("ggplot2", "caTools", "corrplot", "plyr", "rpart", "rpart.plot", "GGally",
+                     "tidyverse", "MLmetrics", "conflicted","ggfortify","rgl", "caret")
+# Check which packages are not already installed
+packages_to_install <- packages_needed[!(packages_needed %in% installed.packages()[,"Package"])]
+if(length(packages_to_install)) install.packages(packages_to_install)
+```
+
+# Load necessary libraries
+# Load the required libraries for the analysis
+```{r}
+#load libraries
+library("ggplot2")
+library("e1071")
+library(dplyr)
+library(reshape2)
+library(corrplot)
+library(caret)
+library(pROC)
+library(grid)
+library(ggfortify)
+library(purrr)
+library(nnet)
+require(foreach)
+require(iterators)
+require(parallel)
+library(reshape2)
+library(tidyverse)
+
+```
+
+# Load the 'conflicted' library to handle function naming conflicts
+
+```{r}
+library(conflicted)
+# Resolve any conflicts by preferring the 'count' function from the 'dplyr' package
+conflicted::conflicts_prefer(dplyr::count)
+```
+
+# Read the raw dataset from the specified file path
+```{r}
+# reading the raw  data 
+DataSet_Raw <- read.csv("data.csv", header=TRUE)
+
+```
+
+# View the raw dataset to understand its structure
+#M= Malignant(cancer) B=Benign (not cancer)
+
+```{r}
+View(DataSet_Raw)
+```
+
+# View the first 6 rows and structure of the dataset
+```{r}
+View(head(DataSet_Raw))
+```
+# Check the structure of the dataset to understand the types and dimensions of the data
+```{r}
+str(DataSet_Raw)
+```
+# Check the dimensions (number of rows and columns) and summary statistics of the dataset
+```{r}
+dim(DataSet_Raw)
+summary(DataSet_Raw)
+```
+
+# ----------------------------------------
+
+# Data Preprocessing for Breast Cancer Wisconsin Dataset
+
+# ----------------------------------------
+
+# Define the columns to be removed as they are redundant or not required
+# Remove the first and second columns, and the 32nd column from the dataset
+```{r}
+Cleaned_data <- DataSet_Raw[,-c(0:1)]
+Cleaned_data <- Cleaned_data[,-32]
+# Convert the 'diagnosis' column to a factor for appropriate statistical treatment
+Cleaned_data$diagnosis <- as.factor(Cleaned_data$diagnosis)
+# Display the first few rows of the modified data
+head(Cleaned_data)
+
+```
+
+# Check for missing values in each column of the cleaned data
+```{r}
+sapply(Cleaned_data, function(x) sum(is.na(x)))
+# Provide a summary of the cleaned data
+summary(Cleaned_data)
+```
+
+# Count the number of Malignant (M) and Benign (B) cases in the dataset
+```{r}
+diagnosis_counts <- Cleaned_data %>% count(diagnosis)
+```
+
+# Create a bar plot to visualize the counts of Malignant (M) and Benign (B) cases
+```{r}
+# Count the instances of Malignant(M) and Benign(B) cases
+# Create a bar plot using ggplot2
+ggplot(data = diagnosis_counts, aes(x = diagnosis, y = n, fill = diagnosis)) +
+  geom_bar(stat="identity") +
+ geom_text(aes(label = n), vjust = -0.2, size = 4) + # Adjust vjust and size as needed# This will add the values on top of the bars
+  labs(title = "Counts of Malignant and Benign Cases",
+       x = "Diagnosis",
+       y = "Count") +
+  scale_fill_manual(name = "Diagnosis Type", # Add a legend with custom names
+                    values = c("skyblue", "Pink"),
+                    labels = c("M = Malignant", "B = Benign")) +
+ theme_minimal()
+```
+
+# Calculate the percentage of Malignant (M) and Benign (B) cases in the dataset
+```{r}
+DataSet_Raw%>%count(diagnosis)%>%group_by(diagnosis)%>%
+  summarize(perc_dx=round((n/569)*100,2))
+```
+
+#let see the frequency of the
+
+```{r}
+# Create a frequency table for the diagnosis
+diagnosis.table <- table(Cleaned_data$diagnosis)
+# Define custom colors for the pie chart
+colors <- c("mediumseagreen", "gold") # Vibrant colors
+
+# Calculate the percentage of each diagnosis type
+diagnosis.prop.table <- prop.table(diagnosis.table)*100
+diagnosis.prop.df <- as.data.frame(diagnosis.prop.table)
+pielabels <- sprintf("%s - %3.1f%s", diagnosis.prop.df[,1], diagnosis.prop.table, "%")
+# Create a pie chart to visualize the frequency of each diagnosis type
+pie(diagnosis.prop.table,
+    labels=pielabels,  
+    clockwise=TRUE,
+    col=colors,
+    border="white", 
+    radius=1.0,
+    cex=1.2, # Increasing the text size 
+    main="Frequency of Cancer Diagnosis")
+
+# Add a legend to the pie chart
+legend("topleft", 1,
+       legend = c("M = Malignant", "B = Benign"), 
+       fill = colors, 
+       cex = 1.0)  # Increase legend text size
+
+```
+# Define subsets of data for '_mean', '_se', and '_worst' feature groups
+```{r}
+# Plot histograms for "_mean" variables grouped by diagnosis
+data_mean <- DataSet_Raw[ ,c("diagnosis", "radius_mean", "texture_mean","perimeter_mean", "area_mean", "smoothness_mean", "compactness_mean", "concavity_mean", "concave.points_mean", "symmetry_mean", "fractal_dimension_mean" )]
+
+data_se <- DataSet_Raw[ ,c("diagnosis", "radius_se", "texture_se","perimeter_se", "area_se", "smoothness_se", "compactness_se", "concavity_se", "concave.points_se", "symmetry_se", "fractal_dimension_se" )]
+
+data_worst <- DataSet_Raw[ ,c("diagnosis", "radius_worst", "texture_worst","perimeter_worst", "area_worst", "smoothness_worst", "compactness_worst", "concavity_worst", "concave.points_worst", "symmetry_worst", "fractal_dimension_worst" )]
+
+# Define a function to plot histograms for a given data subset
+
+plot_histograms <- function(data_subset, title) {
+  ggplot(data = melt(data_subset, id.var = "diagnosis"), mapping = aes(x = value)) + 
+    geom_histogram(bins = 10, aes(fill=diagnosis), alpha=0.5) +
+    facet_wrap(~variable, scales = 'free_x') +
+    labs(title = title, x = "Value", y = "Count") +
+    theme_minimal() +
+    scale_fill_manual(values = c("M" = "limegreen", "B" = "deeppink"))  # Set your colors here
+}
+
+# Plot histograms for "_mean" variables grouped by diagnosis
+plot_histograms(data_mean, title = "Distribution of '_mean' Features by Diagnosis")
+
+# Plot histograms for '_se' feature group
+plot_histograms(data_se, title = "Distribution of '_se' Features by Diagnosis")
+
+# Plot histograms for '_worst' feature group
+plot_histograms(data_worst, title = "Distribution of '_worst' Features by Diagnosis")
+```
+
+# Calculate the correlation matrix for columns 2 through 31 of the cleaned data
+# This helps in understanding the linear relationship between variables.
+```{r}
+# calculate Collinearity
+corMatMy <- cor(Cleaned_data[,2:31])
+# Create a visualization of the correlation matrix using the corrplot function.
+# The "hclust" order clusters the variables based on their hierarchical clustering to 
+# group highly correlated variables together.
+# The tl.cex argument is used to adjust the text size of the variable labels.
+corrplot(corMatMy, order = "hclust", tl.cex = 0.6)
+```
+# Identify highly correlated variables with a correlation coefficient greater than 0.9
+```{r}
+highlyCor <- colnames(Cleaned_data)[findCorrelation(corMatMy, cutoff = 0.9, verbose = TRUE)]
+# Print the names of highly correlated variables
+print(highlyCor)
+```
+
+# Create a new dataset excluding the highly correlated variables
+```{r}
+Cleaned_data_cor <- Cleaned_data[, which(!colnames(Cleaned_data) %in% highlyCor)]
+# Check the number of columns in the new dataset
+ncol(Cleaned_data_cor)
+```
+
+#Principal Component Analysis (PCA)
+# Perform PCA on the cleaned data
+```{r}
+install.packages("rgl", type = "binary")
+library(rgl)
+# Perform PCA on the cleaned data (excluding the diagnosis column) 
+# Standardize the data (mean=0, variance=1) before performing PCA
+Data.pca <- prcomp(Cleaned_data[, 2:31], center=TRUE, scale=TRUE)
+
+# Load rgl package for 3D plotting
+# Create a 3D scatter plot of the first three principal components
+# Each point is colored red
+plot3d(Data.pca$x[,1], Data.pca$x[,2], Data.pca$x[,3], 
+       size=4, 
+       xlab="PC1", ylab="PC2", zlab="PC3",
+       col="Red")
+
+# Adding bold title slightly moved to the top
+title3d(main="3D Scatter Plot of First Three Principal Components", 
+        cex=1.5,   
+        adj=c(0.5, -3.0)) 
+
+
+```
+---------------------------------------------------------------------------------------
+# Note: in case of the above code chunks gives error
+# sometime the library(rgl) might not able to load in some build, in this case the below chunks will help to visualise 3D plot 
+--------------------------------------------------------------
+
+```{r}
+
+install.packages("scatterplot3d", type = "binary")
+library(scatterplot3d)
+# Perform PCA on the cleaned data (excluding the diagnosis column) 
+# Standardize the data (mean=0, variance=1) before performing PCA
+Data.pca <- prcomp(Cleaned_data[, 2:31], center=TRUE, scale=TRUE)
+
+# Create a 3D scatter plot using scatterplot3d
+scatterplot3d(Data.pca$x[,1], Data.pca$x[,2], Data.pca$x[,3], 
+              color="Red", 
+              xlab="PC1", ylab="PC2", zlab="PC3", 
+              main="3D Scatter Plot of First Three Principal Components")
+
+```
+
+# Display the summary of the PCA results to understand the variance explained by each principal component
+```{r}
+summary(Data.pca)
+```
+
+# Calculate the proportion of variance explained (PVE) for each principal component
+```{r}
+pca_var <- Data.pca$sdev^2
+pve_df <- pca_var / sum(pca_var)
+cum_pve <- cumsum(pve_df)
+pve_table <- tibble(comp = seq(1:ncol(Cleaned_data %>% select(-diagnosis))), pve_df, cum_pve)
+
+# Visualize the cumulative PVE using a scatter plot
+ggplot(pve_table, aes(x = comp, y = cum_pve)) + 
+  geom_point() + 
+  geom_abline(intercept = 0.95, color = "blue", slope = 0)
+
+```
+## Perform PCA on the cleaned data (excluding highly correlated variables) and standardize the data
+# Converting the PCA results to a data frame for easy manipulation with ggplot2
+```{r}
+Data.pca2 <- prcomp(Cleaned_data_cor, center=TRUE, scale=TRUE)
+# Display the summary of the new PCA results
+summary(Data.pca2)
+```
+# Create a scatter plot for the first two principal components (PC1 and PC2)
+# Color each point based on the 'diagnosis' column from the original cleaned data
+```{r}
+# The color of each point is determined by the 'diagnosis' column from the original 'Cleaned_data' dataset
+pca_df <- as.data.frame(Data.pca2$x)
+ggplot(pca_df, aes(x=PC1, y=PC2, col=Cleaned_data$diagnosis)) + geom_point(alpha=0.5)
+# Set the transparency of the points to 0.7 to better visualize overlapping points
+```
+# Visualize the loadings of the variables on the first two principal components using the autoplot function
+```{r}
+autoplot(Data.pca2, data = Cleaned_data,  colour = 'diagnosis',
+                    loadings = FALSE, loadings.label = TRUE, loadings.colour = "blue")
+```
+# Create a new dataframe combining the diagnosis column with the principal component scores
+```{r}
+df_pcs <- cbind(as_tibble(Cleaned_data$diagnosis), as_tibble(Data.pca2$x))
+# Create a pairs plot for the first three principal components, colored by diagnosis
+GGally::ggpairs(df_pcs, columns = 2:4, ggplot2::aes(color = value))
+```
+#Data Splitting for Training and Testing
+# Splitting the data into training and testing sets (75% - 25% split)
+```{r}
+# Set a random seed for reproducibility
+set.seed(123)
+# Combine the diagnosis column with the cleaned data (excluding highly correlated variables)
+df <- cbind(diagnosis = Cleaned_data$diagnosis, Cleaned_data_cor)
+# Create a partition to split the data into training (70%) and testing (30%) sets
+train_indx <- createDataPartition(df$diagnosis, p = 0.7, list = FALSE)
+# Define the training and testing sets based on the partition
+train_set <- df[train_indx,]
+test_set <- df[-train_indx,]
+# Check the number of rows in the training set
+nrow(train_set)
+
+```
+## Check the number of rows in the testing set
+```{r}
+nrow(test_set)
+```
+#Tran and test the cleaned data to use in the machine learning model
+```{r}
+# Create a dataframe to visualize the distribution of data between the training and testing sets
+data_for_plot <- data.frame(
+  Dataset = c("Training Set", "Test Set"),
+  Count = c(nrow(train_set), nrow(test_set))
+)
+
+# Compute the total number of samples
+total_samples <- sum(data_for_plot$Count)
+
+# Compute the percentage of samples in the training and testing sets
+data_for_plot$Percentage <- (data_for_plot$Count / total_samples) * 100
+
+# Define custom colors for the bar plot
+custom_colors <- c("Training Set" = "deeppink", "Test Set" = "blue")
+# Create a bar plot to visualize the distribution of data between the training and testing sets
+ggplot(data_for_plot, aes(x = Dataset, y = Count, fill = Dataset)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = custom_colors) +
+  theme_minimal() +
+  labs(title = "Distribution of Data: Training vs Test Set", 
+       x = "", 
+       y = "Number of Samples") +
+  geom_text(aes(label = sprintf("%.2f%%", Percentage), y = Count + max(Count)*0.02), vjust = -0.5)
+
+```
+#Model Training and Evaluation Setup
+# Set up the training control parameters for cross-validation (5-fold CV)
+# Enable class probability estimation and use twoClassSummary for binary classification problems
+```{r}
+fitControl <- trainControl(method="cv",
+                            number = 5,
+                            preProcOptions = list(thresh = 0.99), # threshold for pca preprocess
+                            classProbs = TRUE,
+                           summaryFunction = twoClassSummary)
+```
+# Machine learning models starting ftom the random forest 
+#Random Forest
+
+```{r}
+# Train a Random Forest model on the training set
+# Use the Area Under the ROC Curve (AUC) as the performance metric
+# Standardize the features (mean=0, variance=1) before trainin
+Model_RandomForest<- train(diagnosis~.,
+                  data =train_set,
+                  method="rf",
+                  metric="ROC",
+                  preProcess = c('center', 'scale'),
+                  trControl=fitControl)
+# Plot the importance of the top 10 features for the Random Forest model
+plot(varImp(Model_RandomForest), top = 10, main = "Random forest:Top 10 Important Variables ")
+
+```
+```{r}
+# Make predictions on the testing set using the Random Forest model
+Predction_RandomForest <- predict(Model_RandomForest, test_set)
+# Compute the confusion matrix for the Random Forest model
+ConfusionMatrix_RandomForest <- confusionMatrix(Predction_RandomForest, test_set$diagnosis, positive = "M")
+# Display the confusion matrix
+ConfusionMatrix_RandomForest
+```
+#model Random Forest with PCA
+```{r}
+# Train a Random Forest model with PCA preprocessing on the training set
+# Use the ranger implementation for faster training
+model_pca_rf <- train(diagnosis~.,
+                  data = train_set,
+                  method="ranger",
+                  metric="ROC",
+                  #tuneLength=10,
+                  preProcess = c('center', 'scale', 'pca'),
+                  trControl=fitControl)
+```
+# Make predictions on the testing set using the Random Forest model with PCA preprocessing
+```{r}
+pred_pca_rf <- predict(model_pca_rf, test_set)
+# Compute the confusion matrix for the Random Forest model with PCA preprocessing
+cm_pca_rf <- confusionMatrix(pred_pca_rf, test_set$diagnosis, positive = "M")
+# Display the confusion matrix
+cm_pca_rf
+```
+
+# K-Nearest Neighbors (KNN) Model
+```{r}
+# Train a K-Nearest Neighbors (KNN) model on the training set
+# Use the Area Under the ROC Curve (AUC) as the performance metric
+# Standardize the features (mean=0, variance=1) before training
+# Perform a 10-fold hyperparameter tuning to find the best value for the number of neighbors (k)
+Model_Knn <- train(
+          diagnosis ~ .,
+          data = train_set,
+          method = "knn",
+          metric = "ROC",
+          preProcess = c('center', 'scale'),
+          tuneLength = 10,
+          trControl = fitControl)
+
+
+```
+```{r}
+# Make predictions on the testing set using the KNN model
+Prediction_knn <- predict(Model_Knn,test_set)
+# Compute the confusion matrix for the KNN model
+cm_knn<- confusionMatrix(Prediction_knn,test_set$diagnosis,positive = "M")
+# Display the confusion matrix
+cm_knn
+```
+
+#Neural Networks (NNET)
+```{r}
+# Train a Neural Network model on the training set
+# Use the Area Under the ROC Curve (AUC) as the performance metric
+# Standardize the features (mean=0, variance=1) before training
+# Perform a 10-fold hyperparameter tuning to find the best values for the number of units and decay parameters
+Model_nnet <- train(diagnosis~.,
+                    data = train_set,
+                    method="nnet",
+                    metric="ROC",
+                    preProcess=c('center', 'scale'),
+                    trace=FALSE,
+                    tuneLength=10,
+                    trControl=fitControl)
+```
+# Make predictions on the testing set using the Neural Network model
+```{r}
+pred_nnet <- predict(Model_nnet, test_set)
+# Compute the confusion matrix for the Neural Network model
+cm_nnet <- confusionMatrix(pred_nnet, test_set$diagnosis, positive = "M")
+# Display the confusion matrix
+cm_nnet
+```
+
+#SVM with radial kernel
+```{r}
+# Train a Support Vector Machine (SVM) model with a radial kernel on the training set
+# Use the Area Under the ROC Curve (AUC) as the performance metric
+# Standardize the features (mean=0, variance=1) before training
+Model_svm <- train(diagnosis~.,
+                    data = train_set,
+                    method="svmRadial",
+                    metric="ROC",
+                    preProcess=c('center', 'scale'),
+                    trace=FALSE,
+                    trControl=fitControl)
+```
+# Make predictions on the testing set using the SVM model
+```{r}
+pred_svm <- predict(Model_svm, test_set)
+# Compute the confusion matrix for the SVM model
+cm_svm <- confusionMatrix(pred_svm, test_set$diagnosis, positive = "M")
+# Display the confusion matrix
+cm_svm
+```
+# Extract the accuracy from the confusion matrices of all models
+```{r}
+accuracy_rf <- ConfusionMatrix_RandomForest$overall["Accuracy"]
+accuracy_knn <- cm_knn$overall["Accuracy"]
+accuracy_nnet <- cm_nnet$overall["Accuracy"]
+accuracy_svm <- cm_svm$overall["Accuracy"]
+# Create a dataframe to hold the accuracy values of all models
+accuracy_data <- data.frame(
+  Model = c("Random Forest", "KNN", "Neural Network", "SVM"),
+  Accuracy = c(accuracy_rf, accuracy_knn, accuracy_nnet, accuracy_svm)
+)
+
+# Define custom colors for the bar plot
+bar_colors <- c("gold", "blue", "limegreen", "purple")
+
+# Create a bar plot to compare the accuracy of all models
+
+ggplot(accuracy_data, aes(x=Model, y=Accuracy, fill=Model)) +
+  geom_bar(stat="identity", aes(fill=Model)) +
+  scale_fill_manual(values=bar_colors) +
+  labs(title="Model Accuracy Comparison", y="Accuracy", x="Model") +
+  theme_minimal() +
+  geom_text(aes(label=sprintf("%.2f%%", Accuracy*100)), 
+            vjust=-0.5, color="black", size=4) + 
+  theme(legend.position="none") # Hide the legend
+
+```
+# Display the session information to understand the environment, loaded packages, and their versions
+```{r}
+sessionInfo()
+```
+
